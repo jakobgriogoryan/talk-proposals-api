@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Http\Controllers;
 
+use App\Enums\ReviewRating;
 use App\Exceptions\DuplicateReviewException;
 use App\Helpers\ApiResponse;
 use App\Http\Requests\StoreReviewRequest;
@@ -21,6 +22,17 @@ use Illuminate\Support\Facades\Log;
  */
 class ReviewController extends Controller
 {
+    /**
+     * Get available rating options.
+     */
+    public function ratingOptions(): JsonResponse
+    {
+        return ApiResponse::success(
+            'Rating options retrieved successfully',
+            ['ratings' => ReviewRating::options()]
+        );
+    }
+
     /**
      * Display a listing of reviews for a proposal.
      */

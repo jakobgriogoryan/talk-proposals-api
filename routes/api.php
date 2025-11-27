@@ -31,6 +31,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('proposals', ProposalController::class);
 
     // Reviews
+    Route::get('/reviews/rating-options', [ReviewController::class, 'ratingOptions']);
     Route::get('/proposals/{proposal}/reviews', [ReviewController::class, 'index']);
     Route::post('/proposals/{proposal}/reviews', [ReviewController::class, 'store']);
     Route::get('/proposals/{proposal}/reviews/{review}', [ReviewController::class, 'show']);

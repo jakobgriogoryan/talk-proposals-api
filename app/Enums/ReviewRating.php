@@ -41,4 +41,35 @@ enum ReviewRating: int
     {
         return self::TEN->value;
     }
+
+    /**
+     * Get label for a rating value.
+     */
+    public function label(): string
+    {
+        return match ($this) {
+            self::ONE => '1 - Poor',
+            self::TWO => '2 - Fair',
+            self::THREE => '3 - Good',
+            self::FOUR => '4 - Very Good',
+            self::FIVE => '5 - Excellent',
+            self::TEN => '10 - Outstanding',
+        };
+    }
+
+    /**
+     * Get all rating options with labels.
+     *
+     * @return array<int, array{value: int, label: string}>
+     */
+    public static function options(): array
+    {
+        return array_map(
+            fn (self $rating) => [
+                'value' => $rating->value,
+                'label' => $rating->label(),
+            ],
+            self::cases()
+        );
+    }
 }
