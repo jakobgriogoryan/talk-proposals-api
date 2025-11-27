@@ -17,15 +17,55 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use OpenApi\Attributes as OA;
 
 /**
  * Controller for managing reviews.
  */
+#[OA\Tag(name: "Reviews")]
 class ReviewController extends Controller
 {
     /**
      * Get available rating options.
      */
+    #[OA\Get(
+        path: "/reviews/rating-options",
+        summary: "Get rating options",
+        description: "Returns all available rating options (1-5 and 10) with their labels.",
+        tags: ["Reviews"],
+        security: [["sanctum" => []]],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: "Rating options retrieved successfully",
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: "status", type: "string", example: "success"),
+                        new OA\Property(property: "message", type: "string", example: "Rating options retrieved successfully"),
+                        new OA\Property(
+                            property: "data",
+                            type: "object",
+                            properties: [
+                                new OA\Property(
+                                    property: "ratings",
+                                    type: "array",
+                                    items: new OA\Items(
+                                        type: "object",
+                                        properties: [
+                                            new OA\Property(property: "value", type: "integer", example: 5),
+                                            new OA\Property(property: "label", type: "string", example: "5 - Excellent"),
+                                        ]
+                                    )
+                                ),
+                            ]
+                        ),
+                    ]
+                )
+            ),
+            new OA\Response(response: 401, description: "Unauthenticated"),
+            new OA\Response(response: 500, description: "Server error"),
+        ]
+    )]
     public function ratingOptions(): JsonResponse
     {
         return ApiResponse::success(
@@ -37,6 +77,48 @@ class ReviewController extends Controller
     /**
      * Display a listing of reviews for a proposal.
      */
+    #[OA\Get(
+        path: "/proposals/{proposalId}/reviews",
+        summary: "Get reviews for a proposal",
+        description: "Retrieves all reviews for a specific proposal, ordered by most recent first.",
+        tags: ["Reviews"],
+        security: [["sanctum" => []]],
+        parameters: [
+            new OA\Parameter(
+                name: "proposalId",
+                in: "path",
+                required: true,
+                description: "Proposal ID",
+                schema: new OA\Schema(type: "integer", example: 1)
+            ),
+        ],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: "Reviews retrieved successfully",
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: "status", type: "string", example: "success"),
+                        new OA\Property(property: "message", type: "string", example: "Reviews retrieved successfully"),
+                        new OA\Property(
+                            property: "data",
+                            type: "object",
+                            properties: [
+                                new OA\Property(
+                                    property: "reviews",
+                                    type: "array",
+                                    items: new OA\Items(ref: "#/components/schemas/Review")
+                                ),
+                            ]
+                        ),
+                    ]
+                )
+            ),
+            new OA\Response(response: 401, description: "Unauthenticated"),
+            new OA\Response(response: 404, description: "Proposal not found"),
+            new OA\Response(response: 500, description: "Server error"),
+        ]
+    )]
     public function index(Request $request, Proposal $proposal): JsonResponse
     {
         try {
@@ -60,6 +142,56 @@ class ReviewController extends Controller
     /**
      * Store a newly created review.
      */
+    #[OA\Post(
+        path: "/proposals/{proposalId}/reviews",
+        summary: "Create a review",
+        description: "Creates a new review for a proposal. Each reviewer can only review a proposal once. Rating must be 1, 2, 3, 4, 5, or 10.",
+        tags: ["Reviews"],
+        security: [["sanctum" => []]],
+        parameters: [
+            new OA\Parameter(
+                name: "proposalId",
+                in: "path",
+                required: true,
+                description: "Proposal ID",
+                schema: new OA\Schema(type: "integer", example: 1)
+            ),
+        ],
+        requestBody: new OA\RequestBody(
+            required: true,
+            content: new OA\JsonContent(
+                required: ["rating"],
+                properties: [
+                    new OA\Property(property: "rating", type: "integer", enum: [1, 2, 3, 4, 5, 10], example: 5, description: "Rating value (1-5 or 10)"),
+                    new OA\Property(property: "comment", type: "string", nullable: true, example: "Great proposal!", description: "Optional review comment"),
+                ]
+            )
+        ),
+        responses: [
+            new OA\Response(
+                response: 201,
+                description: "Review created successfully",
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: "status", type: "string", example: "success"),
+                        new OA\Property(property: "message", type: "string", example: "Review created successfully"),
+                        new OA\Property(
+                            property: "data",
+                            type: "object",
+                            properties: [
+                                new OA\Property(property: "review", ref: "#/components/schemas/Review"),
+                            ]
+                        ),
+                    ]
+                )
+            ),
+            new OA\Response(response: 401, description: "Unauthenticated"),
+            new OA\Response(response: 403, description: "Unauthorized or duplicate review"),
+            new OA\Response(response: 404, description: "Proposal not found"),
+            new OA\Response(response: 422, description: "Validation error"),
+            new OA\Response(response: 500, description: "Server error"),
+        ]
+    )]
     public function store(StoreReviewRequest $request, Proposal $proposal): JsonResponse
     {
         try {
@@ -112,6 +244,51 @@ class ReviewController extends Controller
     /**
      * Display the specified review.
      */
+    #[OA\Get(
+        path: "/proposals/{proposalId}/reviews/{reviewId}",
+        summary: "Get a specific review",
+        description: "Retrieves a single review by ID for a specific proposal.",
+        tags: ["Reviews"],
+        security: [["sanctum" => []]],
+        parameters: [
+            new OA\Parameter(
+                name: "proposalId",
+                in: "path",
+                required: true,
+                description: "Proposal ID",
+                schema: new OA\Schema(type: "integer", example: 1)
+            ),
+            new OA\Parameter(
+                name: "reviewId",
+                in: "path",
+                required: true,
+                description: "Review ID",
+                schema: new OA\Schema(type: "integer", example: 1)
+            ),
+        ],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: "Review retrieved successfully",
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: "status", type: "string", example: "success"),
+                        new OA\Property(property: "message", type: "string", example: "Review retrieved successfully"),
+                        new OA\Property(
+                            property: "data",
+                            type: "object",
+                            properties: [
+                                new OA\Property(property: "review", ref: "#/components/schemas/Review"),
+                            ]
+                        ),
+                    ]
+                )
+            ),
+            new OA\Response(response: 401, description: "Unauthenticated"),
+            new OA\Response(response: 404, description: "Review or proposal not found"),
+            new OA\Response(response: 500, description: "Server error"),
+        ]
+    )]
     public function show(Request $request, Proposal $proposal, Review $review): JsonResponse
     {
         try {
@@ -140,6 +317,63 @@ class ReviewController extends Controller
     /**
      * Update the specified review.
      */
+    #[OA\Put(
+        path: "/proposals/{proposalId}/reviews/{reviewId}",
+        summary: "Update a review",
+        description: "Updates an existing review. Only admins can update reviews. Rating must be 1, 2, 3, 4, 5, or 10.",
+        tags: ["Reviews"],
+        security: [["sanctum" => []]],
+        parameters: [
+            new OA\Parameter(
+                name: "proposalId",
+                in: "path",
+                required: true,
+                description: "Proposal ID",
+                schema: new OA\Schema(type: "integer", example: 1)
+            ),
+            new OA\Parameter(
+                name: "reviewId",
+                in: "path",
+                required: true,
+                description: "Review ID",
+                schema: new OA\Schema(type: "integer", example: 1)
+            ),
+        ],
+        requestBody: new OA\RequestBody(
+            required: true,
+            content: new OA\JsonContent(
+                required: ["rating"],
+                properties: [
+                    new OA\Property(property: "rating", type: "integer", enum: [1, 2, 3, 4, 5, 10], example: 5, description: "Rating value (1-5 or 10)"),
+                    new OA\Property(property: "comment", type: "string", nullable: true, example: "Updated comment", description: "Optional review comment"),
+                ]
+            )
+        ),
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: "Review updated successfully",
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: "status", type: "string", example: "success"),
+                        new OA\Property(property: "message", type: "string", example: "Review updated successfully"),
+                        new OA\Property(
+                            property: "data",
+                            type: "object",
+                            properties: [
+                                new OA\Property(property: "review", ref: "#/components/schemas/Review"),
+                            ]
+                        ),
+                    ]
+                )
+            ),
+            new OA\Response(response: 401, description: "Unauthenticated"),
+            new OA\Response(response: 403, description: "Unauthorized - Admin only"),
+            new OA\Response(response: 404, description: "Review or proposal not found"),
+            new OA\Response(response: 422, description: "Validation error"),
+            new OA\Response(response: 500, description: "Server error"),
+        ]
+    )]
     public function update(UpdateReviewRequest $request, Proposal $proposal, Review $review): JsonResponse
     {
         try {

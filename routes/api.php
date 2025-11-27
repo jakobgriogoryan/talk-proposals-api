@@ -44,13 +44,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Reviewer routes - reviewers can see all proposals for review
     Route::prefix('review')->group(function () {
-        Route::get('/proposals', function (Request $request) {
-            if (! $request->user()->isReviewer()) {
-                return ApiResponse::error('Unauthorized', 403);
-            }
-
-            return app(ProposalController::class)->index($request);
-        });
+        Route::get('/proposals', [ProposalController::class, 'indexForReview']);
     });
 
     // Admin routes
