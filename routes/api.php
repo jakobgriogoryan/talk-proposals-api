@@ -44,17 +44,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Admin routes
     Route::prefix('admin')->group(function () {
-        Route::get('/proposals', function (Request $request) {
-            if (! $request->user()->isAdmin()) {
-                return response()->json(['message' => 'Unauthorized'], 403);
-            }
-            return app(AdminProposalController::class)->index($request);
-        });
-        Route::patch('/proposals/{proposal}/status', function (Request $request, \App\Models\Proposal $proposal) {
-            if (! $request->user()->isAdmin()) {
-                return response()->json(['message' => 'Unauthorized'], 403);
-            }
-            return app(AdminProposalController::class)->updateStatus($request, $proposal);
-        });
+        // Authorization is enforced in the controller via isAdmin()
+        Route::get('/proposals', [AdminProposalController::class, 'index']);
+        Route::patch('/proposals/{proposal}/status', [AdminProposalController::class, 'updateStatus']);
     });
 });
