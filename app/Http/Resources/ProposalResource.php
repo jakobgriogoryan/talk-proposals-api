@@ -18,7 +18,8 @@ class ProposalResource extends JsonResource
             'id' => $this->id,
             'title' => $this->title,
             'description' => $this->description,
-            'file_path' => $this->file_path ? asset('storage/'.$this->file_path) : null,
+            // Use simple path instead of route() helper for better performance
+            'file_path' => $this->file_path ? '/proposals/'.$this->id.'/download' : null,
             'status' => $this->status,
             'user' => new UserResource($this->whenLoaded('user')),
             'tags' => TagResource::collection($this->whenLoaded('tags')),

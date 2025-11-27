@@ -11,6 +11,7 @@ use App\Models\Tag;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 class ProposalController extends Controller
 {
@@ -111,12 +112,39 @@ class ProposalController extends Controller
             }
         }
 
-        $proposal->load(['user', 'tags', 'reviews.reviewer']);
+        $proposal->load(['user', 'tags']);
 
         return ApiResponse::success(
             'Proposal retrieved successfully',
             ['proposal' => new ProposalResource($proposal)]
         );
+    }
+
+    /**
+     * Download the proposal file.
+     */
+    public function downloadFile(Request $request, Proposal $proposal): BinaryFileResponse|JsonResponse
+    {
+        // Check authorization - speakers can only download their own, reviewers and admins can download any
+        if ($request->user()->isSpeaker() && ! $request->user()->isAdmin()) {
+            if ($proposal->user_id !== $request->user()->id) {
+                return ApiResponse::error('Unauthorized', 403);
+            }
+        }
+
+        if (! $proposal->file_path) {
+            return ApiResponse::error('File not found', 404);
+        }
+
+        $filePath = storage_path('app/public/'.$proposal->file_path);
+
+        if (! file_exists($filePath)) {
+            return ApiResponse::error('File not found', 404);
+        }
+
+        return response()->download($filePath, basename($proposal->file_path), [
+            'Content-Type' => 'application/pdf',
+        ]);
     }
 
     /**

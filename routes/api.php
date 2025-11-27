@@ -27,6 +27,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Proposals (speaker routes)
     Route::apiResource('proposals', ProposalController::class);
+    Route::get('/proposals/{proposal}/download', [ProposalController::class, 'downloadFile'])->name('proposals.download');
 
     // Reviews
     Route::get('/proposals/{proposal}/reviews', [ReviewController::class, 'index']);
