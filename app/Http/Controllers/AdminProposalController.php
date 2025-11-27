@@ -6,6 +6,7 @@ namespace App\Http\Controllers;
 
 use App\Constants\PaginationConstants;
 use App\Enums\ProposalStatus;
+use App\Events\ProposalStatusChanged;
 use App\Exceptions\UnauthorizedException;
 use App\Helpers\ApiResponse;
 use App\Http\Requests\UpdateProposalStatusRequest;
@@ -99,6 +100,10 @@ class AdminProposalController extends Controller
         try {
             DB::beginTransaction();
 
+            // Get old status as string (status is cast to ProposalStatus enum)
+            $oldStatus = $proposal->status instanceof ProposalStatus 
+                ? $proposal->status->value 
+                : (string) $proposal->status;
             $status = ProposalStatus::from($request->string('status')->toString());
 
             $proposal->update([
@@ -108,6 +113,12 @@ class AdminProposalController extends Controller
             $proposal->load(['user', 'tags']);
 
             DB::commit();
+
+            // Broadcast proposal status changed event
+            $newStatus = $status->value;
+            if ($oldStatus !== $newStatus) {
+                event(new ProposalStatusChanged($proposal, $oldStatus, $newStatus));
+            }
 
             return ApiResponse::success(
                 'Proposal status updated successfully',

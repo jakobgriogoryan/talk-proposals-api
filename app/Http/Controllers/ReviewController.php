@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Enums\ReviewRating;
+use App\Events\ProposalReviewed;
 use App\Exceptions\DuplicateReviewException;
 use App\Helpers\ApiResponse;
 use App\Http\Requests\StoreReviewRequest;
@@ -81,8 +82,12 @@ class ReviewController extends Controller
             ]);
 
             $review->load('reviewer');
+            $proposal->refresh()->load('user');
 
             DB::commit();
+
+            // Broadcast proposal reviewed event
+            event(new ProposalReviewed($proposal, $review));
 
             return ApiResponse::success(
                 'Review created successfully',

@@ -7,6 +7,7 @@ namespace App\Http\Controllers;
 use App\Constants\FileConstants;
 use App\Constants\PaginationConstants;
 use App\Enums\ProposalStatus;
+use App\Events\ProposalSubmitted;
 use App\Exceptions\ProposalFileNotFoundException;
 use App\Helpers\ApiResponse;
 use App\Http\Requests\StoreProposalRequest;
@@ -127,6 +128,9 @@ class ProposalController extends Controller
             $proposal->load(['user', 'tags']);
 
             DB::commit();
+
+            // Broadcast proposal submitted event
+            event(new ProposalSubmitted($proposal));
 
             return ApiResponse::success(
                 'Proposal created successfully',
