@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\ApiResponse;
 use App\Http\Resources\TagResource;
 use App\Models\Tag;
 use Illuminate\Http\JsonResponse;
@@ -22,9 +23,10 @@ class TagController extends Controller
 
         $tags = $query->orderBy('name')->get();
 
-        return response()->json([
-            'tags' => TagResource::collection($tags),
-        ]);
+        return ApiResponse::success(
+            'Tags retrieved successfully',
+            ['tags' => TagResource::collection($tags)]
+        );
     }
 
     /**
@@ -32,17 +34,19 @@ class TagController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $request->validate([
+        $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
         ]);
 
         $tag = Tag::firstOrCreate([
-            'name' => $request->name,
+            'name' => $validated['name'],
         ]);
 
-        return response()->json([
-            'tag' => new TagResource($tag),
-        ], 201);
+        return ApiResponse::success(
+            'Tag created successfully',
+            ['tag' => new TagResource($tag)],
+            201
+        );
     }
 }
 

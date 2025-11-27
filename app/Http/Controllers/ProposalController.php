@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\ApiResponse;
 use App\Http\Requests\StoreProposalRequest;
 use App\Http\Requests\UpdateProposalRequest;
 use App\Http\Resources\ProposalResource;
@@ -46,15 +47,18 @@ class ProposalController extends Controller
         $perPage = $request->get('per_page', 15);
         $proposals = $query->latest()->paginate($perPage);
 
-        return response()->json([
-            'proposals' => ProposalResource::collection($proposals->items()),
-            'pagination' => [
-                'current_page' => $proposals->currentPage(),
-                'last_page' => $proposals->lastPage(),
-                'per_page' => $proposals->perPage(),
-                'total' => $proposals->total(),
-            ],
-        ]);
+        return ApiResponse::success(
+            'Proposals retrieved successfully',
+            [
+                'proposals' => ProposalResource::collection($proposals->items()),
+                'pagination' => [
+                    'current_page' => $proposals->currentPage(),
+                    'last_page' => $proposals->lastPage(),
+                    'per_page' => $proposals->perPage(),
+                    'total' => $proposals->total(),
+                ],
+            ]
+        );
     }
 
     /**
@@ -86,10 +90,11 @@ class ProposalController extends Controller
 
         $proposal->load(['user', 'tags']);
 
-        return response()->json([
-            'proposal' => new ProposalResource($proposal),
-            'message' => 'Proposal created successfully',
-        ], 201);
+        return ApiResponse::success(
+            'Proposal created successfully',
+            ['proposal' => new ProposalResource($proposal)],
+            201
+        );
     }
 
     /**
@@ -100,15 +105,16 @@ class ProposalController extends Controller
         // Check authorization
         if ($request->user()->isSpeaker() && ! $request->user()->isAdmin()) {
             if ($proposal->user_id !== $request->user()->id) {
-                return response()->json(['message' => 'Unauthorized'], 403);
+                return ApiResponse::error('Unauthorized', 403);
             }
         }
 
         $proposal->load(['user', 'tags', 'reviews.reviewer']);
 
-        return response()->json([
-            'proposal' => new ProposalResource($proposal),
-        ]);
+        return ApiResponse::success(
+            'Proposal retrieved successfully',
+            ['proposal' => new ProposalResource($proposal)]
+        );
     }
 
     /**
@@ -150,10 +156,10 @@ class ProposalController extends Controller
 
         $proposal->load(['user', 'tags']);
 
-        return response()->json([
-            'proposal' => new ProposalResource($proposal),
-            'message' => 'Proposal updated successfully',
-        ]);
+        return ApiResponse::success(
+            'Proposal updated successfully',
+            ['proposal' => new ProposalResource($proposal)]
+        );
     }
 
     /**
@@ -163,7 +169,7 @@ class ProposalController extends Controller
     {
         // Check authorization
         if ($proposal->user_id !== $request->user()->id && ! $request->user()->isAdmin()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+            return ApiResponse::error('Unauthorized', 403);
         }
 
         // Delete file if exists
@@ -173,9 +179,7 @@ class ProposalController extends Controller
 
         $proposal->delete();
 
-        return response()->json([
-            'message' => 'Proposal deleted successfully',
-        ]);
+        return ApiResponse::success('Proposal deleted successfully');
     }
 }
 

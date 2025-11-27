@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\ApiResponse;
 use App\Http\Requests\LoginRequest;
 use App\Http\Requests\RegisterRequest;
 use App\Http\Resources\UserResource;
@@ -29,10 +30,11 @@ class AuthController extends Controller
         // Login the user for SPA authentication
         Auth::guard('web')->login($user);
 
-        return response()->json([
-            'user' => new UserResource($user),
-            'message' => 'Registration successful',
-        ], 201);
+        return ApiResponse::success(
+            'Registration successful',
+            ['user' => new UserResource($user)],
+            201
+        );
     }
 
     /**
@@ -41,9 +43,7 @@ class AuthController extends Controller
     public function login(LoginRequest $request): JsonResponse
     {
         if (! Auth::guard('web')->attempt($request->only('email', 'password'), $request->boolean('remember'))) {
-            return response()->json([
-                'message' => 'Invalid credentials',
-            ], 401);
+            return ApiResponse::error('Invalid credentials', 401);
         }
 
         // Regenerate session if available
@@ -56,10 +56,10 @@ class AuthController extends Controller
 
         $user = Auth::guard('web')->user();
 
-        return response()->json([
-            'user' => new UserResource($user),
-            'message' => 'Login successful',
-        ]);
+        return ApiResponse::success(
+            'Login successful',
+            ['user' => new UserResource($user)]
+        );
     }
 
     /**
@@ -67,9 +67,10 @@ class AuthController extends Controller
      */
     public function user(Request $request): JsonResponse
     {
-        return response()->json([
-            'user' => new UserResource($request->user()),
-        ]);
+        return ApiResponse::success(
+            'User retrieved successfully',
+            ['user' => new UserResource($request->user())]
+        );
     }
 
     /**
@@ -88,9 +89,7 @@ class AuthController extends Controller
             session()->regenerateToken();
         }
 
-        return response()->json([
-            'message' => 'Logout successful',
-        ]);
+        return ApiResponse::success('Logout successful');
     }
 }
 

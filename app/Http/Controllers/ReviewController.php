@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\ApiResponse;
 use App\Http\Requests\StoreReviewRequest;
 use App\Http\Resources\ReviewResource;
 use App\Models\Proposal;
@@ -18,9 +19,10 @@ class ReviewController extends Controller
     {
         $reviews = $proposal->reviews()->with('reviewer')->latest()->get();
 
-        return response()->json([
-            'reviews' => ReviewResource::collection($reviews),
-        ]);
+        return ApiResponse::success(
+            'Reviews retrieved successfully',
+            ['reviews' => ReviewResource::collection($reviews)]
+        );
     }
 
     /**
@@ -30,7 +32,7 @@ class ReviewController extends Controller
     {
         // Check if user is reviewer
         if (! $request->user()->isReviewer()) {
-            return response()->json(['message' => 'Only reviewers can create reviews'], 403);
+            return ApiResponse::error('Only reviewers can create reviews', 403);
         }
 
         // Check if reviewer already reviewed this proposal
@@ -39,7 +41,7 @@ class ReviewController extends Controller
             ->first();
 
         if ($existingReview) {
-            return response()->json(['message' => 'You have already reviewed this proposal'], 422);
+            return ApiResponse::error('You have already reviewed this proposal', 422);
         }
 
         $review = Review::create([
@@ -51,10 +53,11 @@ class ReviewController extends Controller
 
         $review->load('reviewer');
 
-        return response()->json([
-            'review' => new ReviewResource($review),
-            'message' => 'Review created successfully',
-        ], 201);
+        return ApiResponse::success(
+            'Review created successfully',
+            ['review' => new ReviewResource($review)],
+            201
+        );
     }
 
     /**
@@ -63,14 +66,15 @@ class ReviewController extends Controller
     public function show(Request $request, Proposal $proposal, Review $review): JsonResponse
     {
         if ($review->proposal_id !== $proposal->id) {
-            return response()->json(['message' => 'Review not found for this proposal'], 404);
+            return ApiResponse::error('Review not found for this proposal', 404);
         }
 
         $review->load('reviewer');
 
-        return response()->json([
-            'review' => new ReviewResource($review),
-        ]);
+        return ApiResponse::success(
+            'Review retrieved successfully',
+            ['review' => new ReviewResource($review)]
+        );
     }
 }
 

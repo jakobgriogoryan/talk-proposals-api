@@ -1,5 +1,6 @@
 <?php
 
+use App\Helpers\ApiResponse;
 use App\Http\Controllers\AdminProposalController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProposalController;
@@ -36,7 +37,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('review')->group(function () {
         Route::get('/proposals', function (Request $request) {
             if (! $request->user()->isReviewer()) {
-                return response()->json(['message' => 'Unauthorized'], 403);
+                return ApiResponse::error('Unauthorized', 403);
             }
             return app(ProposalController::class)->index($request);
         });

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Helpers\ApiResponse;
 use App\Http\Requests\UpdateProposalStatusRequest;
 use App\Http\Resources\ProposalResource;
 use App\Models\Proposal;
@@ -16,7 +17,7 @@ class AdminProposalController extends Controller
     public function index(Request $request): JsonResponse
     {
         if (! $request->user()->isAdmin()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+            return ApiResponse::error('Unauthorized', 403);
         }
 
         $query = Proposal::with(['user', 'tags', 'reviews']);
@@ -47,15 +48,18 @@ class AdminProposalController extends Controller
         $perPage = $request->get('per_page', 15);
         $proposals = $query->latest()->paginate($perPage);
 
-        return response()->json([
-            'proposals' => ProposalResource::collection($proposals->items()),
-            'pagination' => [
-                'current_page' => $proposals->currentPage(),
-                'last_page' => $proposals->lastPage(),
-                'per_page' => $proposals->perPage(),
-                'total' => $proposals->total(),
-            ],
-        ]);
+        return ApiResponse::success(
+            'Proposals retrieved successfully',
+            [
+                'proposals' => ProposalResource::collection($proposals->items()),
+                'pagination' => [
+                    'current_page' => $proposals->currentPage(),
+                    'last_page' => $proposals->lastPage(),
+                    'per_page' => $proposals->perPage(),
+                    'total' => $proposals->total(),
+                ],
+            ]
+        );
     }
 
     /**
@@ -64,7 +68,7 @@ class AdminProposalController extends Controller
     public function updateStatus(UpdateProposalStatusRequest $request, Proposal $proposal): JsonResponse
     {
         if (! $request->user()->isAdmin()) {
-            return response()->json(['message' => 'Unauthorized'], 403);
+            return ApiResponse::error('Unauthorized', 403);
         }
 
         $proposal->update([
@@ -73,10 +77,10 @@ class AdminProposalController extends Controller
 
         $proposal->load(['user', 'tags']);
 
-        return response()->json([
-            'proposal' => new ProposalResource($proposal),
-            'message' => 'Proposal status updated successfully',
-        ]);
+        return ApiResponse::success(
+            'Proposal status updated successfully',
+            ['proposal' => new ProposalResource($proposal)]
+        );
     }
 }
 
