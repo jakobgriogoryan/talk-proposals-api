@@ -121,41 +121,21 @@ class AdminProposalController extends Controller
                 throw new UnauthorizedException;
             }
 
-            $query = Proposal::with(['user', 'tags', 'reviews']);
-
-            // Search by title
-            if ($request->filled('search')) {
-                $query->searchByTitle($request->string('search')->toString());
-            }
-
-            // Filter by tags
-            if ($request->filled('tags')) {
-                $tagIds = is_array($request->tags) ? $request->tags : explode(',', (string) $request->tags);
-                $tagIds = array_map('intval', array_filter($tagIds));
-                if (count($tagIds) > 0) {
-                    $query->byTags($tagIds);
-                }
-            }
-
-            // Filter by status
-            if ($request->filled('status')) {
-                $status = $request->string('status')->toString();
-                if (in_array($status, ProposalStatus::values(), true)) {
-                    $query->byStatus($status);
-                }
-            }
-
-            // Filter by user
-            if ($request->filled('user_id')) {
-                $query->byUser((int) $request->integer('user_id'));
-            }
-
             $perPage = min(
                 max((int) $request->get('per_page', PaginationConstants::DEFAULT_PER_PAGE), PaginationConstants::MIN_PER_PAGE),
                 PaginationConstants::MAX_PER_PAGE
             );
 
-            $proposals = $query->latest()->paginate($perPage);
+            $searchQuery = $request->filled('search') ? $request->string('search')->toString() : null;
+            $useScout = $searchQuery !== null && config('scout.driver') === 'algolia' && !empty(config('scout.algolia.id'));
+
+            // Use Scout for full-text search if available and search query is provided
+            if ($useScout) {
+                $proposals = $this->searchWithScout($request, $searchQuery, $perPage);
+            } else {
+                // Fallback to database search
+                $proposals = $this->searchWithDatabase($request, $perPage);
+            }
 
             return ApiResponse::success(
                 'Proposals retrieved successfully',
@@ -179,6 +159,116 @@ class AdminProposalController extends Controller
 
             return ApiResponse::error('Failed to retrieve proposals', 500);
         }
+    }
+
+    /**
+     * Search proposals using Laravel Scout (Algolia) for admin.
+     */
+    private function searchWithScout(Request $request, string $searchQuery, int $perPage)
+    {
+        // Build Algolia filters
+        $filters = [];
+
+        // Filter by status
+        if ($request->filled('status')) {
+            $status = $request->string('status')->toString();
+            if (in_array($status, ProposalStatus::values(), true)) {
+                $filters[] = 'status:'.$status;
+            }
+        }
+
+        // Filter by user
+        if ($request->filled('user_id')) {
+            $filters[] = 'user_id:'.(int) $request->integer('user_id');
+        }
+
+        // Filter by tags
+        if ($request->filled('tags')) {
+            $tagIds = is_array($request->tags) ? $request->tags : explode(',', (string) $request->tags);
+            $tagIds = array_map('intval', array_filter($tagIds));
+            if (count($tagIds) > 0) {
+                // Algolia filter for array contains any
+                $tagFilters = array_map(fn ($id) => 'tag_ids:'.$id, $tagIds);
+                $filters[] = '('.implode(' OR ', $tagFilters).')';
+            }
+        }
+
+        // Perform Scout search with filters
+        $searchResults = Proposal::search($searchQuery)
+            ->when(count($filters) > 0, function ($search) use ($filters) {
+                return $search->whereRaw(implode(' AND ', $filters));
+            })
+            ->paginate($perPage);
+
+        // Get the actual models from search results
+        $proposalIds = $searchResults->map(fn ($result) => $result->id)->toArray();
+
+        if (empty($proposalIds)) {
+            // Return empty paginator if no results
+            return new \Illuminate\Pagination\LengthAwarePaginator(
+                collect([]),
+                0,
+                $perPage,
+                1,
+                ['path' => $request->url(), 'query' => $request->query()]
+            );
+        }
+
+        // Load relationships and maintain search order
+        $proposals = Proposal::with(['user', 'tags', 'reviews'])
+            ->whereIn('id', $proposalIds)
+            ->get()
+            ->sortBy(fn ($proposal) => array_search($proposal->id, $proposalIds))
+            ->values();
+
+        // Create a paginator manually to maintain Scout's pagination info
+        $currentPage = $searchResults->currentPage();
+        $total = $searchResults->total();
+
+        return new \Illuminate\Pagination\LengthAwarePaginator(
+            $proposals,
+            $total,
+            $perPage,
+            $currentPage,
+            ['path' => $request->url(), 'query' => $request->query()]
+        );
+    }
+
+    /**
+     * Search proposals using database queries (fallback) for admin.
+     */
+    private function searchWithDatabase(Request $request, int $perPage)
+    {
+        $query = Proposal::with(['user', 'tags', 'reviews']);
+
+        // Search by title (fallback to LIKE query)
+        if ($request->filled('search')) {
+            $query->searchByTitle($request->string('search')->toString());
+        }
+
+        // Filter by tags
+        if ($request->filled('tags')) {
+            $tagIds = is_array($request->tags) ? $request->tags : explode(',', (string) $request->tags);
+            $tagIds = array_map('intval', array_filter($tagIds));
+            if (count($tagIds) > 0) {
+                $query->byTags($tagIds);
+            }
+        }
+
+        // Filter by status
+        if ($request->filled('status')) {
+            $status = $request->string('status')->toString();
+            if (in_array($status, ProposalStatus::values(), true)) {
+                $query->byStatus($status);
+            }
+        }
+
+        // Filter by user
+        if ($request->filled('user_id')) {
+            $query->byUser((int) $request->integer('user_id'));
+        }
+
+        return $query->latest()->paginate($perPage);
     }
 
     /**

@@ -538,17 +538,17 @@
                     "Reviews"
                 ],
                 "summary": "List all proposals for review (Reviewer only)",
-                "description": "Retrieves all proposals for reviewers to review. Only accessible by reviewer users. Supports filtering by search, tags, and status.",
+                "description": "Retrieves all proposals for reviewers to review. Only accessible by reviewer users. Supports full-text search (using Laravel Scout with Algolia) across title, description, tags, and author name. Also supports filtering by tags and status.",
                 "operationId": "1bed2c6b88bd971d3349d4fc565eb917",
                 "parameters": [
                     {
                         "name": "search",
                         "in": "query",
-                        "description": "Search proposals by title",
+                        "description": "Full-text search across proposal title, description, tags, and author name. Uses Laravel Scout with Algolia for advanced search capabilities when configured.",
                         "required": false,
                         "schema": {
                             "type": "string",
-                            "example": "Laravel"
+                            "example": "Laravel framework"
                         }
                     },
                     {
@@ -673,7 +673,7 @@
                     "Proposals"
                 ],
                 "summary": "List proposals",
-                "description": "Retrieves a paginated list of proposals. Speakers see only their own proposals, while reviewers and admins see all proposals. Supports filtering by search, tags, and status.",
+                "description": "Retrieves a paginated list of proposals. Speakers see only their own proposals, while reviewers and admins see all proposals. Supports full-text search (using Laravel Scout with Algolia) across title, description, tags, and author name. Also supports filtering by tags and status.",
                 "operationId": "d7921395a1b3aa095baa799106226e94",
                 "parameters": [
                     {

@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Laravel\Scout\Searchable;
 
 /**
  * Proposal model.
@@ -32,7 +33,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  */
 class Proposal extends Model
 {
-    use HasFactory;
+    use HasFactory, Searchable;
 
     /**
      * The attributes that are mass assignable.
@@ -231,5 +232,52 @@ class Proposal extends Model
         }
 
         return $this->reviews->count();
+    }
+
+    /**
+     * Get the indexable data array for the model.
+     *
+     * @return array<string, mixed>
+     */
+    public function toSearchableArray(): array
+    {
+        // Load relationships if not already loaded
+        $this->loadMissing(['user', 'tags']);
+
+        // Calculate average rating and reviews count
+        $avgRating = $this->getAverageRating();
+        $reviewsCount = $this->getReviewsCount();
+
+        return [
+            'id' => $this->id,
+            'title' => $this->title,
+            'description' => $this->description,
+            'status' => $this->status instanceof ProposalStatus ? $this->status->value : $this->status,
+            'user_id' => $this->user_id,
+            'user_name' => $this->user->name ?? '',
+            'user_email' => $this->user->email ?? '',
+            'tags' => $this->tags->pluck('name')->toArray(),
+            'tag_ids' => $this->tags->pluck('id')->toArray(),
+            'average_rating' => $avgRating,
+            'reviews_count' => $reviewsCount,
+            'created_at' => $this->created_at?->toIso8601String(),
+            'updated_at' => $this->updated_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Get the value used to index the model.
+     */
+    public function getScoutKey(): mixed
+    {
+        return $this->id;
+    }
+
+    /**
+     * Get the key name used to index the model.
+     */
+    public function getScoutKeyName(): string
+    {
+        return 'id';
     }
 }
