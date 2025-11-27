@@ -12,6 +12,24 @@ class VerifyCsrfToken extends Middleware
      * @var array<int, string>
      */
     protected $except = [
-        // Sanctum SPA routes are handled automatically
+        // API routes are handled by Sanctum's EnsureFrontendRequestsAreStateful middleware
+        'api/*',
     ];
+
+    /**
+     * Determine if the request should be excluded from CSRF verification.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return bool
+     */
+    protected function inExceptArray($request)
+    {
+        // Exclude all API routes - Sanctum handles CSRF for stateful requests
+        $path = $request->path();
+        if (str_starts_with($path, 'api/')) {
+            return true;
+        }
+
+        return parent::inExceptArray($request);
+    }
 }

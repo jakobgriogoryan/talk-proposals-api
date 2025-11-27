@@ -25,9 +25,10 @@ use OpenApi\Attributes as OA;
 )]
 #[OA\SecurityScheme(
     securityScheme: "sanctum",
-    type: "http",
-    scheme: "session",
-    description: "Laravel Sanctum SPA authentication using session cookies"
+    type: "apiKey",
+    in: "cookie",
+    name: "laravel_session",
+    description: "Laravel Sanctum SPA authentication using session cookies. To authenticate: 1) Log in via the frontend application at http://talkproposals.test/login, 2) The session cookie will be automatically sent with requests from the same browser. Note: Swagger UI cannot manually set session cookies - you must authenticate via the frontend first."
 )]
 #[OA\Tag(
     name: "Authentication",

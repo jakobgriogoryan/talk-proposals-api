@@ -117,6 +117,13 @@
 </head>
 
 <body @if(config('l5-swagger.defaults.ui.display.dark_mode')) id="dark-mode" @endif>
+<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin: 10px; border-radius: 4px;">
+    <strong>⚠️ Authentication Note:</strong> This API uses Laravel Sanctum with session-based authentication. 
+    To test authenticated endpoints in Swagger UI, you must first log in via the frontend application at 
+    <a href="http://talkproposals.test/login" target="_blank">http://talkproposals.test/login</a>. 
+    The session cookie will be automatically sent with requests from the same browser. 
+    The "Authorize" button below is for documentation purposes only - authentication is handled via session cookies.
+</div>
 <div id="swagger-ui"></div>
 
 <script src="{{ l5_swagger_asset($documentation, 'swagger-ui-bundle.js') }}"></script>
@@ -150,6 +157,7 @@
 
             requestInterceptor: function(request) {
                 request.headers['X-CSRF-TOKEN'] = '{{ csrf_token() }}';
+                request.credentials = 'include'; // Include cookies in requests
                 return request;
             },
 
