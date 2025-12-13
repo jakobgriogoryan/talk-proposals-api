@@ -38,7 +38,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/proposals/top-rated', [ProposalController::class, 'topRated']);
     Route::get('/proposals/{proposal}/download', [ProposalController::class, 'downloadFile'])->name('proposals.download');
     Route::post('/proposals', [ProposalController::class, 'store'])
-        ->middleware('throttle:proposals,uploads');
+        ->middleware(['throttle:proposals', 'throttle:uploads']);
     Route::get('/proposals', [ProposalController::class, 'index']);
     Route::get('/proposals/{proposal}', [ProposalController::class, 'show']);
     Route::put('/proposals/{proposal}', [ProposalController::class, 'update'])

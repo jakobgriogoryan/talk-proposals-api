@@ -76,12 +76,13 @@ class AuthController extends Controller
         try {
             DB::beginTransaction();
 
-            $role = UserRole::from($request->string('role')->toString());
+            $validated = $request->validated();
+            $role = UserRole::from($validated['role']);
 
             $user = User::create([
-                'name' => $request->string('name')->toString(),
-                'email' => $request->string('email')->toString(),
-                'password' => Hash::make($request->string('password')->toString()),
+                'name' => $validated['name'],
+                'email' => $validated['email'],
+                'password' => Hash::make($validated['password']),
                 'role' => $role->value,
             ]);
 
@@ -101,10 +102,7 @@ class AuthController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            Log::error('Error registering user', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error registering user', $e, $request);
 
             return ApiResponse::error('Failed to register user', 500);
         }
@@ -157,8 +155,9 @@ class AuthController extends Controller
     public function login(LoginRequest $request): JsonResponse
     {
         try {
+            $validated = $request->validated();
             if (! Auth::guard('web')
-                ->attempt($request->only('email', 'password'), $request->boolean('remember'))
+                ->attempt(['email' => $validated['email'], 'password' => $validated['password']], $validated['remember'] ?? false)
             ) {
                 return ApiResponse::error('Invalid credentials', 401);
             }
@@ -185,10 +184,7 @@ class AuthController extends Controller
                 ['user' => new UserResource($user)]
             );
         } catch (\Exception $e) {
-            Log::error('Error logging in user', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error logging in user', $e, $request);
 
             return ApiResponse::error('Failed to login', 500);
         }
@@ -247,10 +243,7 @@ class AuthController extends Controller
                 ['user' => new UserResource($cachedUser)]
             );
         } catch (\Exception $e) {
-            Log::error('Error retrieving user', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error retrieving user', $e, $request);
 
             return ApiResponse::error('Failed to retrieve user', 500);
         }
@@ -300,10 +293,7 @@ class AuthController extends Controller
 
             return ApiResponse::success('Logout successful');
         } catch (\Exception $e) {
-            Log::error('Error logging out user', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error logging out user', $e, $request);
 
             return ApiResponse::error('Failed to logout', 500);
         }

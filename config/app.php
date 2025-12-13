@@ -148,4 +148,17 @@ return [
         'store' => env('APP_MAINTENANCE_STORE', 'database'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | File Storage Configuration
+    |--------------------------------------------------------------------------
+    |
+    | Configuration for file storage quotas and limits.
+    |
+    */
+
+    'file_storage' => [
+        'quota_per_user_mb' => (int) env('FILE_STORAGE_QUOTA_PER_USER_MB', 100),
+    ],
+
 ];

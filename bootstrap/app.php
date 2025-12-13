@@ -30,6 +30,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: [
             'api/*',
         ]);
+
+        // Add request/response logging middleware (development only)
+        $middleware->append(\App\Http\Middleware\LogRequestResponse::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

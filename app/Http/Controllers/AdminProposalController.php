@@ -10,6 +10,7 @@ use App\Events\ProposalStatusChanged;
 use App\Exceptions\UnauthorizedException;
 use App\Helpers\ApiResponse;
 use App\Helpers\CacheHelper;
+use App\Http\Requests\IndexAdminProposalRequest;
 use App\Http\Requests\UpdateProposalStatusRequest;
 use App\Http\Resources\ProposalResource;
 use App\Models\Proposal;
@@ -116,19 +117,12 @@ class AdminProposalController extends Controller
             new OA\Response(response: 500, description: "Server error"),
         ]
     )]
-    public function index(Request $request): JsonResponse
+    public function index(IndexAdminProposalRequest $request): JsonResponse
     {
         try {
-            if (! $request->user()->isAdmin()) {
-                throw new UnauthorizedException;
-            }
-
-            $perPage = min(
-                max((int) $request->get('per_page', PaginationConstants::DEFAULT_PER_PAGE), PaginationConstants::MIN_PER_PAGE),
-                PaginationConstants::MAX_PER_PAGE
-            );
-
-            $searchQuery = $request->filled('search') ? $request->string('search')->toString() : null;
+            $validated = $request->validated();
+            $perPage = $validated['per_page'] ?? PaginationConstants::DEFAULT_PER_PAGE;
+            $searchQuery = $validated['search'] ?? null;
             $useScout = $searchQuery !== null && config('scout.driver') === 'algolia' && !empty(config('scout.algolia.id'));
 
             // Use Scout for full-text search if available and search query is provided
@@ -154,10 +148,7 @@ class AdminProposalController extends Controller
         } catch (UnauthorizedException $e) {
             return ApiResponse::error($e->getMessage(), $e->getCode());
         } catch (\Exception $e) {
-            Log::error('Error retrieving admin proposals', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error retrieving admin proposals', $e, $request);
 
             return ApiResponse::error('Failed to retrieve proposals', 500);
         }
@@ -166,28 +157,29 @@ class AdminProposalController extends Controller
     /**
      * Search proposals using Laravel Scout (Algolia) for admin.
      */
-    private function searchWithScout(Request $request, string $searchQuery, int $perPage): LengthAwarePaginator
+    private function searchWithScout(IndexAdminProposalRequest $request, string $searchQuery, int $perPage): LengthAwarePaginator
     {
+        $validated = $request->validated();
+        
         // Build Algolia filters
         $filters = [];
 
         // Filter by status
-        if ($request->filled('status')) {
-            $status = $request->string('status')->toString();
+        if (isset($validated['status'])) {
+            $status = $validated['status'];
             if (in_array($status, ProposalStatus::values(), true)) {
                 $filters[] = 'status:'.$status;
             }
         }
 
         // Filter by user
-        if ($request->filled('user_id')) {
-            $filters[] = 'user_id:'.(int) $request->integer('user_id');
+        if (isset($validated['user_id'])) {
+            $filters[] = 'user_id:'.$validated['user_id'];
         }
 
         // Filter by tags
-        if ($request->filled('tags')) {
-            $tagIds = is_array($request->tags) ? $request->tags : explode(',', (string) $request->tags);
-            $tagIds = array_map('intval', array_filter($tagIds));
+        if (isset($validated['tags']) && is_array($validated['tags'])) {
+            $tagIds = array_map('intval', array_filter($validated['tags']));
             if (count($tagIds) > 0) {
                 // Algolia filter for array contains any
                 $tagFilters = array_map(fn ($id) => 'tag_ids:'.$id, $tagIds);
@@ -239,35 +231,35 @@ class AdminProposalController extends Controller
     /**
      * Search proposals using database queries (fallback) for admin.
      */
-    private function searchWithDatabase(Request $request, int $perPage): LengthAwarePaginator
+    private function searchWithDatabase(IndexAdminProposalRequest $request, int $perPage): LengthAwarePaginator
     {
+        $validated = $request->validated();
         $query = Proposal::with(['user', 'tags', 'reviews']);
 
         // Search by title (fallback to LIKE query)
-        if ($request->filled('search')) {
-            $query->searchByTitle($request->string('search')->toString());
+        if (isset($validated['search'])) {
+            $query->searchByTitle($validated['search']);
         }
 
         // Filter by tags
-        if ($request->filled('tags')) {
-            $tagIds = is_array($request->tags) ? $request->tags : explode(',', (string) $request->tags);
-            $tagIds = array_map('intval', array_filter($tagIds));
+        if (isset($validated['tags']) && is_array($validated['tags'])) {
+            $tagIds = array_map('intval', array_filter($validated['tags']));
             if (count($tagIds) > 0) {
                 $query->byTags($tagIds);
             }
         }
 
         // Filter by status
-        if ($request->filled('status')) {
-            $status = $request->string('status')->toString();
+        if (isset($validated['status'])) {
+            $status = $validated['status'];
             if (in_array($status, ProposalStatus::values(), true)) {
                 $query->byStatus($status);
             }
         }
 
         // Filter by user
-        if ($request->filled('user_id')) {
-            $query->byUser((int) $request->integer('user_id'));
+        if (isset($validated['user_id'])) {
+            $query->byUser($validated['user_id']);
         }
 
         return $query->latest()->paginate($perPage);
@@ -335,7 +327,8 @@ class AdminProposalController extends Controller
                 ? $proposal->status->value
                 : (string) $proposal->status;
 
-            $status = ProposalStatus::from($request->string('status')->toString());
+            $validated = $request->validated();
+            $status = ProposalStatus::from($validated['status']);
 
             $proposal->update([
                 'status' => $status->value,
@@ -349,7 +342,8 @@ class AdminProposalController extends Controller
             CacheHelper::forgetProposalRelated($proposal->id);
             CacheHelper::forgetUserRelated($proposal->user_id);
 
-            // Broadcast proposal status changed event
+            // Broadcast proposal status changed event (for real-time updates and background jobs)
+            // Event listeners will handle: notifications and indexing
             $newStatus = $status->value;
             if ($oldStatus !== $newStatus) {
                 event(new ProposalStatusChanged($proposal, $oldStatus, $newStatus));
@@ -362,10 +356,8 @@ class AdminProposalController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            Log::error('Error updating proposal status', [
+            $this->logError('Error updating proposal status', $e, $request, [
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to update proposal status', 500);
