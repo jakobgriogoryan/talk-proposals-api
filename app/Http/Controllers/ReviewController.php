@@ -8,6 +8,8 @@ use App\Enums\ReviewRating;
 use App\Events\ProposalReviewed;
 use App\Exceptions\DuplicateReviewException;
 use App\Helpers\ApiResponse;
+use App\Helpers\CacheHelper;
+use App\Http\Requests\IndexReviewRequest;
 use App\Http\Requests\StoreReviewRequest;
 use App\Http\Requests\UpdateReviewRequest;
 use App\Http\Resources\ReviewResource;
@@ -143,11 +145,11 @@ class ReviewController extends Controller
             new OA\Response(response: 500, description: "Server error"),
         ]
     )]
-    public function index(Request $request, Proposal $proposal): JsonResponse
+    public function index(IndexReviewRequest $request, Proposal $proposal): JsonResponse
     {
         try {
-            // Paginate reviews to handle proposals with many reviews
-            $perPage = min((int) $request->integer('per_page', 10), 50); // Max 50 per page
+            $validated = $request->validated();
+            $perPage = $validated['per_page'] ?? 10;
             $reviews = $proposal->reviews()->with('reviewer')->latest()->paginate($perPage);
 
             return ApiResponse::success(
@@ -163,10 +165,8 @@ class ReviewController extends Controller
                 ]
             );
         } catch (\Exception $e) {
-            Log::error('Error retrieving reviews', [
+            $this->logError('Error retrieving reviews', $e, $request, [
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to retrieve reviews', 500);
@@ -240,11 +240,12 @@ class ReviewController extends Controller
 
             DB::beginTransaction();
 
+            $validated = $request->validated();
             $review = Review::create([
                 'proposal_id' => $proposal->id,
                 'reviewer_id' => $request->user()->id,
-                'rating' => (int) $request->integer('rating'),
-                'comment' => $request->filled('comment') ? $request->string('comment')->toString() : null,
+                'rating' => $validated['rating'],
+                'comment' => $validated['comment'] ?? null,
             ]);
 
             $review->load('reviewer');
@@ -252,7 +253,12 @@ class ReviewController extends Controller
 
             DB::commit();
 
-            // Broadcast proposal reviewed event
+            // Invalidate caches related to proposals (reviews affect top-rated)
+            CacheHelper::forgetProposalRelated($proposal->id);
+            CacheHelper::forgetTopRated(10); // Invalidate top-rated cache
+
+            // Broadcast proposal reviewed event (for real-time updates and background jobs)
+            // Event listeners will handle: notifications and indexing
             event(new ProposalReviewed($proposal, $review));
 
             return ApiResponse::success(
@@ -265,10 +271,8 @@ class ReviewController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            Log::error('Error creating review', [
+            $this->logError('Error creating review', $e, $request, [
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to create review', 500);
@@ -337,11 +341,9 @@ class ReviewController extends Controller
                 ['review' => new ReviewResource($review)]
             );
         } catch (\Exception $e) {
-            Log::error('Error retrieving review', [
+            $this->logError('Error retrieving review', $e, $request, [
                 'review_id' => $review->id,
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to retrieve review', 500);
@@ -361,8 +363,8 @@ class ReviewController extends Controller
             content: new OA\JsonContent(
                 required: ["rating"],
                 properties: [
-                    new OA\Property(property: "rating", type: "integer", enum: [1, 2, 3, 4, 5, 10], example: 5, description: "Rating value (1-5 or 10)"),
-                    new OA\Property(property: "comment", type: "string", nullable: true, example: "Updated comment", description: "Optional review comment"),
+                    new OA\Property(property: "rating", description: "Rating value (1-5 or 10)", type: "integer", enum: [1, 2, 3, 4, 5, 10], example: 5),
+                    new OA\Property(property: "comment", description: "Optional review comment", type: "string", example: "Updated comment", nullable: true),
                 ]
             )
         ),
@@ -418,14 +420,19 @@ class ReviewController extends Controller
 
             DB::beginTransaction();
 
+            $validated = $request->validated();
             $review->update([
-                'rating' => (int) $request->integer('rating'),
-                'comment' => $request->filled('comment') ? $request->string('comment')->toString() : null,
+                'rating' => $validated['rating'],
+                'comment' => $validated['comment'] ?? null,
             ]);
 
             $review->load('reviewer');
 
             DB::commit();
+
+            // Invalidate caches related to proposals (reviews affect top-rated)
+            CacheHelper::forgetProposalRelated($review->proposal_id);
+            CacheHelper::forgetTopRated(10); // Invalidate top-rated cache
 
             return ApiResponse::success(
                 'Review updated successfully',
@@ -434,11 +441,9 @@ class ReviewController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            Log::error('Error updating review', [
+            $this->logError('Error updating review', $e, $request, [
                 'review_id' => $review->id,
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to update review', 500);

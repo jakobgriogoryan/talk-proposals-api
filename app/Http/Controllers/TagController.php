@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Http\Controllers;
 
 use App\Helpers\ApiResponse;
+use App\Helpers\CacheHelper;
+use App\Http\Requests\IndexTagRequest;
 use App\Http\Requests\StoreTagRequest;
 use App\Http\Resources\TagResource;
 use App\Models\Tag;
@@ -88,18 +90,23 @@ class TagController extends Controller
             new OA\Response(response: 500, description: "Server error"),
         ]
     )]
-    public function index(Request $request): JsonResponse
+    public function index(IndexTagRequest $request): JsonResponse
     {
         try {
-            $query = Tag::query();
+            $validated = $request->validated();
+            $search = $validated['search'] ?? null;
+            $perPage = $validated['per_page'] ?? 50;
 
-            if ($request->filled('search')) {
-                $query->searchByName($request->string('search')->toString());
-            }
+            // Use cache for tags list (1 hour TTL)
+            $tags = CacheHelper::rememberTags(function () use ($search, $perPage) {
+                $query = Tag::query();
 
-            // Paginate tags to handle large datasets efficiently
-            $perPage = min((int) $request->integer('per_page', 50), 100); // Max 100 per page
-            $tags = $query->orderBy('name')->paginate($perPage);
+                if ($search !== null) {
+                    $query->searchByName($search);
+                }
+
+                return $query->orderBy('name')->paginate($perPage);
+            }, $search);
 
             return ApiResponse::success(
                 'Tags retrieved successfully',
@@ -114,10 +121,7 @@ class TagController extends Controller
                 ]
             );
         } catch (\Exception $e) {
-            Log::error('Error retrieving tags', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error retrieving tags', $e, $request);
 
             return ApiResponse::error('Failed to retrieve tags', 500);
         }
@@ -169,11 +173,15 @@ class TagController extends Controller
         try {
             DB::beginTransaction();
 
+            $validated = $request->validated();
             $tag = Tag::firstOrCreate([
-                'name' => $request->string('name')->toString(),
+                'name' => $validated['name'],
             ]);
 
             DB::commit();
+
+            // Invalidate tags cache when a new tag is created
+            CacheHelper::forgetTags();
 
             return ApiResponse::success(
                 'Tag created successfully',
@@ -183,10 +191,7 @@ class TagController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            Log::error('Error creating tag', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error creating tag', $e, $request);
 
             return ApiResponse::error('Failed to create tag', 500);
         }

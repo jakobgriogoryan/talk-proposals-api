@@ -10,11 +10,17 @@ use App\Enums\ProposalStatus;
 use App\Events\ProposalSubmitted;
 use App\Exceptions\ProposalFileNotFoundException;
 use App\Helpers\ApiResponse;
+use App\Helpers\CacheHelper;
+use App\Http\Requests\IndexProposalRequest;
 use App\Http\Requests\StoreProposalRequest;
+use App\Http\Requests\TopRatedProposalRequest;
 use App\Http\Requests\UpdateProposalRequest;
 use App\Http\Resources\ProposalResource;
+use App\Jobs\IndexProposalJob;
+use App\Jobs\ProcessProposalFileJob;
 use App\Models\Proposal;
 use App\Models\Tag;
+use App\Services\FileUploadService;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -114,7 +120,7 @@ class ProposalController extends Controller
             new OA\Response(response: 500, description: "Server error"),
         ]
     )]
-    public function indexForReview(Request $request): JsonResponse
+    public function indexForReview(IndexProposalRequest $request): JsonResponse
     {
         if (! $request->user()->isReviewer()) {
             return ApiResponse::error('Unauthorized', 403);
@@ -205,17 +211,12 @@ class ProposalController extends Controller
             new OA\Response(response: 500, description: "Server error"),
         ]
     )]
-    public function index(Request $request): JsonResponse
+    public function index(IndexProposalRequest $request): JsonResponse
     {
         try {
-            $this->authorize('viewAny', Proposal::class);
-
-            $perPage = min(
-                max((int) $request->get('per_page', PaginationConstants::DEFAULT_PER_PAGE), PaginationConstants::MIN_PER_PAGE),
-                PaginationConstants::MAX_PER_PAGE
-            );
-
-            $searchQuery = $request->filled('search') ? $request->string('search')->toString() : null;
+            $validated = $request->validated();
+            $perPage = isset($validated['per_page']) ? (int) $validated['per_page'] : PaginationConstants::DEFAULT_PER_PAGE;
+            $searchQuery = $validated['search'] ?? null;
             $useScout = $searchQuery !== null && config('scout.driver') === 'algolia' && !empty(config('scout.algolia.id'));
 
             // Use Scout for full-text search if available and search query is provided
@@ -239,10 +240,7 @@ class ProposalController extends Controller
                 ]
             );
         } catch (\Exception $e) {
-            Log::error('Error retrieving proposals', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error retrieving proposals', $e, $request);
 
             return ApiResponse::error('Failed to retrieve proposals', 500);
         }
@@ -251,8 +249,10 @@ class ProposalController extends Controller
     /**
      * Search proposals using Laravel Scout (Algolia).
      */
-    private function searchWithScout(Request $request, string $searchQuery, int $perPage): LengthAwarePaginator
+    private function searchWithScout(IndexProposalRequest $request, string $searchQuery, int $perPage): LengthAwarePaginator
     {
+        $validated = $request->validated();
+
         // Build Algolia filters
         $filters = [];
 
@@ -262,17 +262,16 @@ class ProposalController extends Controller
         }
 
         // Filter by status
-        if ($request->filled('status')) {
-            $status = $request->string('status')->toString();
+        if (isset($validated['status'])) {
+            $status = $validated['status'];
             if (in_array($status, ProposalStatus::values(), true)) {
                 $filters[] = 'status:'.$status;
             }
         }
 
         // Filter by tags
-        if ($request->filled('tags')) {
-            $tagIds = is_array($request->tags) ? $request->tags : explode(',', (string) $request->tags);
-            $tagIds = array_map('intval', array_filter($tagIds));
+        if (isset($validated['tags']) && is_array($validated['tags'])) {
+            $tagIds = array_map('intval', array_filter($validated['tags']));
             if (count($tagIds) > 0) {
                 // Algolia filter for array contains any
                 $tagFilters = array_map(fn ($id) => 'tag_ids:'.$id, $tagIds);
@@ -324,8 +323,9 @@ class ProposalController extends Controller
     /**
      * Search proposals using database queries (fallback).
      */
-    private function searchWithDatabase(Request $request, int $perPage): LengthAwarePaginator
+    private function searchWithDatabase(IndexProposalRequest $request, int $perPage): LengthAwarePaginator
     {
+        $validated = $request->validated();
         $query = Proposal::with(['user', 'tags']);
 
         // Filter by authenticated user if speaker
@@ -334,22 +334,21 @@ class ProposalController extends Controller
         }
 
         // Search by title (fallback to LIKE query)
-        if ($request->filled('search')) {
-            $query->searchByTitle($request->string('search')->toString());
+        if (isset($validated['search'])) {
+            $query->searchByTitle($validated['search']);
         }
 
         // Filter by tags
-        if ($request->filled('tags')) {
-            $tagIds = is_array($request->tags) ? $request->tags : explode(',', (string) $request->tags);
-            $tagIds = array_map('intval', array_filter($tagIds));
+        if (isset($validated['tags']) && is_array($validated['tags'])) {
+            $tagIds = array_map('intval', array_filter($validated['tags']));
             if (count($tagIds) > 0) {
                 $query->byTags($tagIds);
             }
         }
 
         // Filter by status
-        if ($request->filled('status')) {
-            $status = $request->string('status')->toString();
+        if (isset($validated['status'])) {
+            $status = $validated['status'];
             if (in_array($status, ProposalStatus::values(), true)) {
                 $query->byStatus($status);
             }
@@ -411,24 +410,33 @@ class ProposalController extends Controller
         try {
             DB::beginTransaction();
 
+            $validated = $request->validated();
             $filePath = null;
+
+            // File is already validated by StoreProposalRequest
             if ($request->hasFile('file')) {
                 $file = $request->file('file');
+                // Store file immediately (request-level validation already passed)
+                // Domain-level validation will happen in background job
                 $filePath = $file->store(FileConstants::PROPOSAL_STORAGE_PATH, FileConstants::PROPOSAL_STORAGE_DISK);
+
+                if (!$filePath) {
+                    throw new \RuntimeException('Failed to store file');
+                }
             }
 
             $proposal = Proposal::create([
                 'user_id' => $request->user()->id,
-                'title' => $request->string('title')->toString(),
-                'description' => $request->string('description')->toString(),
+                'title' => $validated['title'],
+                'description' => $validated['description'],
                 'file_path' => $filePath,
                 'status' => ProposalStatus::PENDING->value,
             ]);
 
             // Handle tags (create if not exists, then attach) - tags are optional
-            if ($request->has('tags') && is_array($request->tags) && count($request->tags) > 0) {
+            if (isset($validated['tags']) && is_array($validated['tags']) && count($validated['tags']) > 0) {
                 $tagIds = [];
-                foreach ($request->tags as $tagName) {
+                foreach ($validated['tags'] as $tagName) {
                     $tag = Tag::firstOrCreate(['name' => (string) $tagName]);
                     $tagIds[] = $tag->id;
                 }
@@ -439,14 +447,36 @@ class ProposalController extends Controller
 
             DB::commit();
 
-            // Broadcast proposal submitted event
-            event(new ProposalSubmitted($proposal));
+            // Invalidate caches related to proposals
+            CacheHelper::forgetProposalRelated($proposal->id);
+            CacheHelper::forgetUserRelated($request->user()->id);
+
+            // Broadcast proposal submitted event (for real-time updates and background jobs)
+            // Event listeners will handle: file processing, indexing, and notifications
+            event(new ProposalSubmitted($proposal, $filePath, $request->user()->id));
 
             return ApiResponse::success(
                 'Proposal created successfully',
                 ['proposal' => new ProposalResource($proposal)],
                 201
             );
+        } catch (\InvalidArgumentException $e) {
+            DB::rollBack();
+
+            // Clean up uploaded file if validation fails
+            if (isset($filePath)) {
+                try {
+                    $fileUploadService = app(FileUploadService::class);
+                    $fileUploadService->deleteFile($filePath);
+                } catch (\Exception $cleanupException) {
+                    Log::warning('Failed to cleanup file after validation error', [
+                        'file_path' => $filePath,
+                        'error' => $cleanupException->getMessage(),
+                    ]);
+                }
+            }
+
+            return ApiResponse::error($e->getMessage(), 422);
         } catch (\Exception $e) {
             DB::rollBack();
 
@@ -455,10 +485,7 @@ class ProposalController extends Controller
                 Storage::disk(FileConstants::PROPOSAL_STORAGE_DISK)->delete($filePath);
             }
 
-            Log::error('Error creating proposal', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error creating proposal', $e, $request);
 
             return ApiResponse::error('Failed to create proposal', 500);
         }
@@ -520,10 +547,8 @@ class ProposalController extends Controller
         } catch (AuthorizationException $e) {
             return ApiResponse::error('Unauthorized', 403);
         } catch (\Exception $e) {
-            Log::error('Error retrieving proposal', [
+            $this->logError('Error retrieving proposal', $e, $request, [
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to retrieve proposal', 500);
@@ -535,15 +560,15 @@ class ProposalController extends Controller
      */
     #[OA\Get(
         path: "/proposals/top-rated",
-        summary: "Get top-rated proposals",
         description: "Retrieves approved proposals with an average rating of 4.0 or higher, ordered by rating and review count. Used for displaying featured proposals in a slider.",
-        tags: ["Proposals"],
+        summary: "Get top-rated proposals",
         security: [["sanctum" => []]],
+        tags: ["Proposals"],
         parameters: [
             new OA\Parameter(
                 name: "limit",
-                in: "query",
                 description: "Maximum number of proposals to return",
+                in: "query",
                 required: false,
                 schema: new OA\Schema(type: "integer", example: 10, default: 10)
             ),
@@ -558,14 +583,14 @@ class ProposalController extends Controller
                         new OA\Property(property: "message", type: "string", example: "Top-rated proposals retrieved successfully"),
                         new OA\Property(
                             property: "data",
-                            type: "object",
                             properties: [
                                 new OA\Property(
                                     property: "proposals",
                                     type: "array",
                                     items: new OA\Items(ref: "#/components/schemas/Proposal")
                                 ),
-                            ]
+                            ],
+                            type: "object"
                         ),
                     ]
                 )
@@ -574,44 +599,42 @@ class ProposalController extends Controller
             new OA\Response(response: 500, description: "Server error"),
         ]
     )]
-    public function topRated(Request $request): JsonResponse
+    public function topRated(TopRatedProposalRequest $request): JsonResponse
     {
         try {
-            $limit = min(
-                max((int) $request->get('limit', PaginationConstants::DEFAULT_TOP_RATED_LIMIT), 1),
-                PaginationConstants::MAX_TOP_RATED_LIMIT
-            );
+            $validated = $request->validated();
+            $limit = (int) ($validated['limit'] ?? PaginationConstants::DEFAULT_TOP_RATED_LIMIT);
 
-            $proposals = Proposal::select('proposals.*')
-                ->selectRaw('AVG(reviews.rating) as avg_rating')
-                ->selectRaw('COUNT(reviews.id) as reviews_count')
-                ->leftJoin('reviews', 'proposals.id', '=', 'reviews.proposal_id')
-                ->where('proposals.status', ProposalStatus::APPROVED->value)
-                ->groupBy('proposals.id')
-                ->havingRaw('AVG(reviews.rating) >= ?', [PaginationConstants::MIN_TOP_RATED_RATING])
-                ->havingRaw('COUNT(reviews.id) > 0')
-                ->with(['user', 'tags'])
-                ->orderByDesc('avg_rating')
-                ->orderByDesc('reviews_count')
-                ->limit($limit)
-                ->get()
-                ->map(function ($proposal) {
-                    // Set the calculated values for the resource
-                    $proposal->reviews_avg_rating = (float) $proposal->avg_rating;
-                    $proposal->reviews_count = (int) $proposal->reviews_count;
+            // Use cache for top-rated proposals (15 minutes TTL)
+            $proposals = CacheHelper::rememberTopRated(function () use ($limit) {
+                return Proposal::select('proposals.*')
+                    ->selectRaw('AVG(reviews.rating) as avg_rating')
+                    ->selectRaw('COUNT(reviews.id) as reviews_count')
+                    ->leftJoin('reviews', 'proposals.id', '=', 'reviews.proposal_id')
+                    ->where('proposals.status', ProposalStatus::APPROVED->value)
+                    ->groupBy('proposals.id')
+                    ->havingRaw('AVG(reviews.rating) >= ?', [PaginationConstants::MIN_TOP_RATED_RATING])
+                    ->havingRaw('COUNT(reviews.id) > 0')
+                    ->with(['user', 'tags'])
+                    ->orderByDesc('avg_rating')
+                    ->orderByDesc('reviews_count')
+                    ->limit($limit)
+                    ->get()
+                    ->map(function ($proposal) {
+                        // Set the calculated values for the resource
+                        $proposal->reviews_avg_rating = (float) $proposal->avg_rating;
+                        $proposal->reviews_count = (int) $proposal->reviews_count;
 
-                    return $proposal;
-                });
+                        return $proposal;
+                    });
+            }, $limit);
 
             return ApiResponse::success(
                 'Top-rated proposals retrieved successfully',
                 ['proposals' => ProposalResource::collection($proposals)]
             );
         } catch (\Exception $e) {
-            Log::error('Error retrieving top-rated proposals', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            $this->logError('Error retrieving top-rated proposals', $e, $request);
 
             return ApiResponse::error('Failed to retrieve top-rated proposals', 500);
         }
@@ -672,10 +695,8 @@ class ProposalController extends Controller
         } catch (ProposalFileNotFoundException $e) {
             return ApiResponse::error($e->getMessage(), $e->getCode());
         } catch (\Exception $e) {
-            Log::error('Error downloading proposal file', [
+            $this->logError('Error downloading proposal file', $e, $request, [
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to download file', 500);
@@ -744,24 +765,38 @@ class ProposalController extends Controller
         try {
             DB::beginTransaction();
 
+            $validated = $request->validated();
             $data = [];
 
-            if ($request->filled('title')) {
-                $data['title'] = $request->string('title')->toString();
+            if (isset($validated['title'])) {
+                $data['title'] = $validated['title'];
             }
 
-            if ($request->filled('description')) {
-                $data['description'] = $request->string('description')->toString();
+            if (isset($validated['description'])) {
+                $data['description'] = $validated['description'];
             }
 
             // Handle file update
+            // File is already validated by UpdateProposalRequest
+            $fileChanged = false;
             if ($request->hasFile('file')) {
                 // Delete old file
                 if ($proposal->file_path) {
-                    Storage::disk(FileConstants::PROPOSAL_STORAGE_DISK)->delete($proposal->file_path);
+                    $fileUploadService = app(FileUploadService::class);
+                    $fileUploadService->deleteFile($proposal->file_path);
                 }
+
                 $file = $request->file('file');
-                $data['file_path'] = $file->store(FileConstants::PROPOSAL_STORAGE_PATH, FileConstants::PROPOSAL_STORAGE_DISK);
+                // Store file immediately (request-level validation already passed)
+                // Domain-level validation will happen in background job
+                $newFilePath = $file->store(FileConstants::PROPOSAL_STORAGE_PATH, FileConstants::PROPOSAL_STORAGE_DISK);
+
+                if (!$newFilePath) {
+                    throw new \RuntimeException('Failed to store file');
+                }
+
+                $data['file_path'] = $newFilePath;
+                $fileChanged = true;
             }
 
             if (count($data) > 0) {
@@ -769,10 +804,10 @@ class ProposalController extends Controller
             }
 
             // Handle tags update - tags are optional
-            if ($request->has('tags')) {
-                if (is_array($request->tags) && count($request->tags) > 0) {
+            if (isset($validated['tags'])) {
+                if (is_array($validated['tags']) && count($validated['tags']) > 0) {
                     $tagIds = [];
-                    foreach ($request->tags as $tagName) {
+                    foreach ($validated['tags'] as $tagName) {
                         $tag = Tag::firstOrCreate(['name' => (string) $tagName]);
                         $tagIds[] = $tag->id;
                     }
@@ -787,6 +822,25 @@ class ProposalController extends Controller
 
             DB::commit();
 
+            // Invalidate caches related to proposals
+            CacheHelper::forgetProposalRelated($proposal->id);
+            CacheHelper::forgetUserRelated($proposal->user_id);
+            // Invalidate tags cache if tags were updated
+            if (isset($validated['tags'])) {
+                CacheHelper::forgetTags();
+            }
+
+            // Dispatch background jobs
+            if ($fileChanged && isset($newFilePath)) {
+                // Process file in background (domain-level validation)
+                ProcessProposalFileJob::dispatch($proposal, $newFilePath, $request->user()->id);
+            }
+
+            // Index proposal in Algolia asynchronously (if proposal data changed)
+            if (count($data) > 0 || isset($validated['tags'])) {
+                IndexProposalJob::dispatch($proposal);
+            }
+
             return ApiResponse::success(
                 'Proposal updated successfully',
                 ['proposal' => new ProposalResource($proposal)]
@@ -794,10 +848,8 @@ class ProposalController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
 
-            Log::error('Error updating proposal', [
+            $this->logError('Error updating proposal', $e, $request, [
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to update proposal', 500);
@@ -855,16 +907,18 @@ class ProposalController extends Controller
 
             DB::commit();
 
+            // Invalidate caches related to proposals
+            CacheHelper::forgetProposalRelated($proposal->id);
+            CacheHelper::forgetUserRelated($proposal->user_id);
+
             return ApiResponse::success('Proposal deleted successfully');
         } catch (AuthorizationException $e) {
             return ApiResponse::error('Unauthorized', 403);
         } catch (\Exception $e) {
             DB::rollBack();
 
-            Log::error('Error deleting proposal', [
+            $this->logError('Error deleting proposal', $e, $request, [
                 'proposal_id' => $proposal->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return ApiResponse::error('Failed to delete proposal', 500);

@@ -12,6 +12,9 @@ return Application::configure(basePath: dirname(__DIR__))
         channels: __DIR__.'/../routes/channels.php',
         health: '/up',
     )
+    ->withProviders([
+        \App\Providers\RouteServiceProvider::class,
+    ])
     ->withMiddleware(function (Middleware $middleware): void {
         // Add StartSession middleware to API routes so sessions can be used
         $middleware->api(prepend: [
@@ -27,6 +30,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->validateCsrfTokens(except: [
             'api/*',
         ]);
+
+        // Add request/response logging middleware (development only)
+        $middleware->append(\App\Http\Middleware\LogRequestResponse::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
